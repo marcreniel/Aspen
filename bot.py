@@ -1,6 +1,7 @@
 import os
 import discord
 import logging
+import asyncio
 from dotenv import load_dotenv
 from discord.ext import commands
 from classifier import MistralClassifier
@@ -35,10 +36,17 @@ async def on_message(message: discord.Message):
     # Check if the message is in an active therapy session channel
     if message.channel.id in active_sessions:
         therapist_agent = active_sessions[message.channel.id]
+        
+        if therapist_agent.delete_confirmation and message.content.strip().upper() == "YES, END SESSION":
+            await message.channel.send("Thank you for confirming. This therapy channel will now be deleted. Take care!")
+            await asyncio.sleep(5)  # Give the user a moment to read the message
+            await message.channel.delete()
+            del active_sessions[message.channel.id]
+            return
+
         response = therapist_agent.get_response(message.content)
         await message.channel.send(response)
         return
-
     # If not in an active session channel, check if the user has an active session
     user_session = next((agent for agent in active_sessions.values() if agent.user_id == message.author.id), None)
     
