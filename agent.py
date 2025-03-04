@@ -1,10 +1,9 @@
 import os
 import discord
+import asyncio
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.output_parsers import StrOutputParser
-from langchain_core.runnables import RunnablePassthrough
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain.tools import Tool
 from langchain.agents import initialize_agent, AgentType
@@ -13,10 +12,12 @@ load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API")
 
 class TherapistAgent:
-    def __init__(self, channel_id):
+    def __init__(self, channel_id, user_id=None):
         self.llm = ChatOpenAI(api_key=OPENAI_API_KEY, temperature=0.7)
         self.channel_id = channel_id
-        
+        self.user_id = user_id
+        self.channel = None
+
         self.system_prompt = SystemMessage(content=(
             "You are a compassionate therapist dedicated to providing empathetic emotional support. "
             "Listen carefully, ask clarifying questions if needed, and help users explore their feelings in a non-judgmental manner. "
@@ -51,11 +52,14 @@ class TherapistAgent:
         self.chat_history.extend([HumanMessage(content=user_message), AIMessage(content=response)])
         return response
 
-    def delete_channel(self):
-        return f"DELETE_CHANNEL_{self.channel_id}"
+    def delete_channel(self, *args, **kwargs) -> str:
+        if self.channel is not None:
+            asyncio.create_task(self.channel.delete())
+            return f"The therapy channel has been deleted."
+        return "No channel is set to delete."
 
     @staticmethod
-    async def create_private_channel(guild: discord.Guild, user: discord.Member, bot_user: discord.ClientUser):
+    async def create_private_channel(guild: discord.Guild, user: discord.Member, bot_user: discord.ClientUser) -> discord.TextChannel:
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(view_channel=False),
             user: discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True),
@@ -64,10 +68,10 @@ class TherapistAgent:
         
         channel_name = f"therapy-{user.name}".replace(" ", "-")
         therapy_channel = await guild.create_text_channel(name=channel_name, overwrites=overwrites)
-        
         return therapy_channel
 
     async def start_session(self, channel: discord.TextChannel, user: discord.Member, moderation_flag: str):
+        self.channel = channel
         await user.send(f"A private therapy channel has been created for you: {channel.mention}")
         initial_response = self.get_response(moderation_flag)
         await channel.send(initial_response)

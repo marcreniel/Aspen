@@ -1,9 +1,8 @@
 import os
 import discord
 import logging
-from discord.ext import commands
 from dotenv import load_dotenv
-
+from discord.ext import commands
 from classifier import MistralClassifier
 from agent import TherapistAgent
 
@@ -33,20 +32,17 @@ async def on_message(message: discord.Message):
     if message.author.bot:
         return
 
-    # If the message is in an active therapy session, process it with the corresponding agent
+    # Check if the message is in an active therapy session channel
     if message.channel.id in active_sessions:
         therapist_agent = active_sessions[message.channel.id]
         response = therapist_agent.get_response(message.content)
-        
-        if response.startswith(f"DELETE_CHANNEL_{message.channel.id}"):
-            await message.channel.delete()
-            del active_sessions[message.channel.id]
-            await message.author.send("Your therapy session has ended. The channel has been deleted.")
-        else:
-            await message.channel.send(response)
+        await message.channel.send(response)
         return
 
-    # Process messages from other channels
+    # If not in an active session channel, check if the user has an active session
+    user_session = next((agent for agent in active_sessions.values() if agent.user_id == message.author.id), None)
+    
+    # If no active session, proceed with moderation and potential new session creation
     logger.info(f"Processing message from {message.author}: {message.content}")
     
     moderation_results = await classifier.moderate([message])
@@ -57,27 +53,38 @@ async def on_message(message: discord.Message):
         if flag_message:
             logger.info(f"Flag triggered for {message.author}: {flag_message}")
             
-            # Check if a session already exists for this user
-            user_session = next((agent for agent in active_sessions.values() if agent.user_id == message.author.id), None)
-            
-            if user_session:
-                # Append the message to the existing session
-                response = user_session.get_response(message.content)
-                await message.author.send(f"Message appended to your therapy session. Agent response: {response}")
+            if flag_message == "ProactiveEvaluation" or flag_message == "SelfHarm":
+                if user_session:
+                    # Append the message to the existing therapy session
+                    response = user_session.get_response(message.content)
+                    therapy_channel = bot.get_channel(user_session.channel_id)
+                    
+                    if therapy_channel:
+                        await therapy_channel.send(f"**{message.author.name}:** {message.content}")
+                        await therapy_channel.send(f"**Therapist:** {response}")
+                    
+                    await message.author.send(f"Placeholder for message")
+                    return
+                else:
+                    therapy_channel = await TherapistAgent.create_private_channel(
+                        guild=message.guild,
+                        user=message.author,
+                        bot_user=bot.user,
+                    )
+                    
+                    therapist_agent = TherapistAgent(channel_id=therapy_channel.id, user_id=message.author.id)
+                    await therapist_agent.start_session(therapy_channel, message.author, flag_message)
+                    
+                    active_sessions[therapy_channel.id] = therapist_agent
             else:
-                # Create a new session
-                therapy_channel = await TherapistAgent.create_private_channel(
-                    guild=message.guild,
-                    user=message.author,
-                    bot_user=bot.user,
-                )
-                
-                therapist_agent = TherapistAgent(channel_id=therapy_channel.id)
-                await therapist_agent.start_session(therapy_channel, message.author, flag_message)
-                
-                # Track active session
-                active_sessions[therapy_channel.id] = therapist_agent
-            
+                await message.author.send(f"Harmful languagae detected.")
+                return
             return
+
+@bot.event
+async def on_guild_channel_delete(channel: discord.abc.GuildChannel):
+    if channel.id in active_sessions:
+        del active_sessions[channel.id]
+        logger.info(f"Active session for channel {channel.id} has been removed following channel deletion.")
 
 bot.run(DISCORD_TOKEN)

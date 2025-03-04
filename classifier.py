@@ -36,48 +36,48 @@ class MistralClassifier:
             message["moderation_result"].category_scores.get("hate_and_discrimination", 0) >= 0.01 or
             message["moderation_result"].category_scores.get("violence_and_threats", 0) >= 0.01
         ):
-            return "Triggered Proactive Evaluation"
+            return "ProactiveEvaluation"
 
     def check_sexual_content(self, moderation_result):
         """Check if content is flagged for sexual content"""
         if moderation_result["moderation_result"].categories.get("sexual", False):
-            return "Triggered (sexual content)"
+            return "SexualContent"
         return None
     
     def check_hate_discrimination(self, moderation_result):
         """Check if content is flagged for hate and discrimination"""
         if moderation_result["moderation_result"].categories.get("hate_and_discrimination", False):
-            return "Triggered (hate and discrimination)"
+            return "HateDiscrimination"
         return None
     
     def check_violence_threats(self, moderation_result):
         """Check if content is flagged for violence and threats"""
         if moderation_result["moderation_result"].categories.get("violence_and_threats", False):
-            return "Triggered (violence and threats)"
+            return "ViolenceThreats"
         return None
     
     def check_dangerous_criminal(self, moderation_result):
         """Check if content is flagged for dangerous and criminal content"""
         if moderation_result["moderation_result"].categories.get("dangerous_and_criminal_content", False):
-            return "Triggered (dangerous and criminal content)"
+            return "DangerousCriminal"
         return None
     
     def check_selfharm(self, moderation_result):
         """Check if content is flagged for self-harm"""
         if moderation_result["moderation_result"].categories.get("selfharm", False):
-            return "Triggered (self-harm)"
+            return "SelfHarm"
         return None
     
     def check_health(self, moderation_result):
         """Check if content is flagged for health misinformation"""
         if moderation_result["moderation_result"].categories.get("health", False):
-            return "Triggered (health misinformation)"
+            return "Health"
         return None
     
     def check_pii(self, moderation_result):
         """Check if content is flagged for personal identifiable information"""
         if moderation_result["moderation_result"].categories.get("pii", False):
-            return "Triggered (personal identifiable information)"
+            return "PII"
         return None
     
     def check_all_flags(self, moderation_result):
