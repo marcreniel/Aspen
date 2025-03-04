@@ -12,7 +12,7 @@ load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API")
 
 class TherapistAgent:
-    def init(self, channel_id, user_id=None):
+    def __init__(self, channel_id, user_id=None):
         self.llm = ChatOpenAI(api_key=OPENAI_API_KEY, temperature=0.7)
         self.channel_id = channel_id
         self.user_id = user_id

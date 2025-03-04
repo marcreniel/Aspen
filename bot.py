@@ -88,6 +88,13 @@ async def on_message(message: discord.Message):
                 # generate and send a compassionate GPT warning.
                 warning_message = TherapistAgent.generate_warning_response(message.content)
                 await message.author.send(warning_message)
+                try:
+                    await message.delete()
+                    logger.info(f"Deleted flagged message from {message.author}")
+                except discord.errors.Forbidden:
+                    logger.warning(f"Bot doesn't have permission to delete message from {message.author}")
+                except discord.errors.NotFound:
+                    logger.warning(f"Message from {message.author} not found (already deleted?)")
                 return
             return  # Exit after processing the flagged message
         
