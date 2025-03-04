@@ -42,8 +42,19 @@ class MistralAgent:
                 "content": message.content,
                 "moderation_result": response.results[0]
             })
+        
+        print(results)
         return results
     
+    def proactive_evaluation(self, message):
+        """Check based on classifier threshold on certain categories to trigger agent proactively"""
+        if (
+            message["moderation_result"].category_scores.get("selfharm", 0) >= 0.01 or
+            message["moderation_result"].category_scores.get("hate_and_discrimination", 0) >= 0.01 or
+            message["moderation_result"].category_scores.get("violence_and_threats", 0) >= 0.01
+        ):
+            return "Triggered Proactive Evaluation"
+
     def check_sexual_content(self, moderation_result):
         """Check if content is flagged for sexual content"""
         if moderation_result["moderation_result"].categories.get("sexual", False):
@@ -89,13 +100,14 @@ class MistralAgent:
     def check_all_flags(self, moderation_result):
         """Check all moderation flags and return appropriate message if any are triggered"""
         checks = [
-            self.check_sexual_content,
+            self.check_selfharm,
             self.check_hate_discrimination,
             self.check_violence_threats,
+            self.check_sexual_content,
             self.check_dangerous_criminal,
-            self.check_selfharm,
             self.check_health,
-            self.check_pii
+            self.check_pii,
+            self.proactive_evaluation,
         ]
         
         for check in checks:
