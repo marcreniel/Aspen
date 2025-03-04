@@ -2,31 +2,14 @@ import logging
 from mistralai import Mistral
 import discord
 
-MISTRAL_MODEL = "mistral-small-latest"
-SYSTEM_PROMPT = "You are a helpful assistant."
+MISTRAL_MODEL = "mistral-moderation-2411"
 
 logger = logging.getLogger("discord")
 
-class MistralAgent:
+class MistralClassifier:
     def __init__(self, api_key):
         self.client = Mistral(api_key=api_key)
-
-    async def run(self, message: discord.Message):
-        """
-        Process a message with the Mistral model and return a response.
-        """
-        messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": message.content},
-        ]
-
-        response = await self.client.chat.complete_async(
-            model=MISTRAL_MODEL,
-            messages=messages,
-        )
-
-        return response.choices[0].message.content
-
+    
     async def moderate(self, messages):
         """
         Use Mistral's moderation classifier to evaluate messages.

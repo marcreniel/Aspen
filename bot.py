@@ -4,7 +4,7 @@ import logging
 from discord.ext import commands
 from dotenv import load_dotenv
 
-from agent import MistralAgent
+from classifier import MistralClassifier
 
 PREFIX = "!"
 
@@ -19,7 +19,7 @@ bot = commands.Bot(command_prefix=PREFIX, intents=intents)
 MISTRAL_API_KEY = os.getenv("MISTRAL_API")
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 
-agent = MistralAgent(api_key=MISTRAL_API_KEY)
+classifier = MistralClassifier(api_key=MISTRAL_API_KEY)
 
 @bot.event
 async def on_ready():
@@ -40,10 +40,10 @@ async def on_message(message: discord.Message):
 
     logger.info(f"Processing message from {message.author}: {message.content}")
     
-    moderation_results = await agent.moderate([message])
+    moderation_results = await classifier.moderate([message])
     
     for result in moderation_results:
-        flag_message = agent.check_all_flags(result)
+        flag_message = classifier.check_all_flags(result)
         if flag_message:
             await message.reply(flag_message)
             return 
