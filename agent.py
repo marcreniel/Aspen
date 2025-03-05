@@ -53,6 +53,7 @@ class TherapistAgent:
             HumanMessage(content="{input}")
         ])
         self.chat_history = []
+        
         # This list tracks topics that have already been used as the basis for a follow-up question.
         self.intake_topics = []
 
