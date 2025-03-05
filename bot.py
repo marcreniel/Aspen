@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 import os
 import discord
 import logging
@@ -96,7 +95,7 @@ async def on_message(message: discord.Message):
                 except discord.errors.NotFound:
                     logger.warning(f"Message from {message.author} not found (already deleted?)")
                 return
-            return  # Exit after processing the flagged message
+            return  
         
 @bot.event
 async def on_guild_channel_delete(channel: discord.abc.GuildChannel):
