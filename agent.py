@@ -7,8 +7,6 @@ from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from langchain.tools import Tool
-from langchain.agents import initialize_agent, AgentType
 from langgraph.graph import StateGraph, END
 
 load_dotenv()
@@ -30,6 +28,7 @@ class TherapyState(TypedDict):
     user_id: str
     channel_id: str
     intent: str
+    followup_count: int
 
 class TherapistAgent:
     def __init__(self, channel_id, user_id=None):
@@ -38,95 +37,55 @@ class TherapistAgent:
         self.user_id = user_id
         self.channel = None
         self.delete_confirmation = False
+        
+        # Set the minimum number of follow-up questions to be asked during intake.
+        self.MIN_FOLLOWUPS = 3
 
-        # System prompt defines a warm, compassionate tone.
+        # System prompt to enforce a warm, adaptive, and compassionate tone.
         self.system_prompt = SystemMessage(content=(
-            "You are a deeply compassionate therapist. Listen actively, express genuine empathy, and ask adaptive questions that fit the user's situation. "
-            "Avoid repeating the same phrasing and always speak in a warm, understanding manner."
+            "You are a deeply compassionate therapist. Listen attentively, express genuine empathy, "
+            "and ask adaptive follow-up questions related to the client's situation. "
+            "Avoid repeating the same questions and ensure each response feels warm and supportive."
         ))
-
         self.prompt = ChatPromptTemplate.from_messages([
             self.system_prompt,
             MessagesPlaceholder(variable_name="chat_history"),
             HumanMessage(content="{input}")
         ])
         self.chat_history = []
-
-        # Set up tools for session termination and channel deletion.
-        self.request_delete_confirmation_tool = Tool(
-            name="request_delete_confirmation",
-            func=self.request_delete_confirmation,
-            description="Confirm session termination request"
-        )
-        self.delete_channel_tool = Tool(
-            name="delete_channel",
-            func=self.delete_channel,
-            description="Delete therapy channel after confirmation"
-        )
-        self.agent = initialize_agent(
-            [self.request_delete_confirmation_tool, self.delete_channel_tool],
-            self.llm,
-            agent=AgentType.CHAT_CONVERSATIONAL_REACT_DESCRIPTION,
-            verbose=True,
-            max_iterations=3
-        )
-
-        # Define 9 intake topics.
-        self.intake_topics = [
-            "Personal and family medical/mental health history",
-            "Current life situation (work, relationships, stressors)",
-            "Previous therapy experiences and coping mechanisms",
-            "Substance use history",
-            "Risk assessment (suicidal thoughts, self-harm)",
-            "Treatment goals and expectations",
-            "Cultural background and beliefs",
-            "Current medications and medical conditions",
-            "Support system and social relationships"
-        ]
-        self.initial_context = ""
-
-        # Map topics to keywords for flexible matching.
-        self.topic_keywords = {
-            "Personal and family medical/mental health history": ["personal", "family", "health", "mental health", "history"],
-            "Current life situation (work, relationships, stressors)": ["work", "relationship", "personal life", "stress", "stressor"],
-            "Previous therapy experiences and coping mechanisms": ["therapy", "counseling", "coping", "experience"],
-            "Substance use history": ["substance", "drug", "weed", "alcohol", "marijuana"],
-            "Risk assessment (suicidal thoughts, self-harm)": ["suicidal", "self-harm", "harm myself", "risk"],
-            "Treatment goals and expectations": ["treatment", "goal", "expectation", "hope", "future"],
-            "Cultural background and beliefs": ["cultural", "tradition", "belief", "background"],
-            "Current medications and medical conditions": ["medicine", "medications", "condition", "illness", "medical"],
-            "Support system and social relationships": ["support", "friend", "family", "social", "relationship"]
-        }
-
-        # Custom adaptive follow-up questions per topic.
-        self.custom_questions = {
-            "Personal and family medical/mental health history": 
-                "I understand it can be very personal. If you feel safe, could you share some details about your family's health or your own mental health journey?",
-            "Current life situation (work, relationships, stressors)":
-                "It sounds as though life might be feeling overwhelming. Can you tell me more about your work, relationships, or any current stressors?",
-            "Previous therapy experiences and coping mechanisms":
-                "Sometimes old patterns reveal much about what's effective. Have you ever sought therapy or found personal ways to cope with difficult times?",
-            "Substance use history":
-                "I know this can be sensitive—if you're comfortable sharing, how have substances figured into your way of managing stress?",
-            "Risk assessment (suicidal thoughts, self-harm)":
-                "This topic is really hard to discuss, but if you feel at ease, could you tell me if you've ever had thoughts that worried you, such as self-harm or feeling unsafe?",
-            "Treatment goals and expectations":
-                "Sometimes looking forward can help us see a way out. What hopes or goals do you have for yourself, even if they seem small?",
-            "Cultural background and beliefs":
-                "Our values and cultural background shape so much of our identity. Would you be willing to share a bit about your cultural roots or important beliefs?",
-            "Current medications and medical conditions":
-                "Sometimes what's occurring physically can affect how we feel emotionally. If you're comfortable, could you tell me about any medications you take or any conditions you face?",
-            "Support system and social relationships":
-                "A strong support system can make a huge difference. Could you describe your relationships with close friends or family, or who you rely on during tough times?"
-        }
+        # This list tracks topics that have already been used as the basis for a follow-up question.
+        self.intake_topics = []
 
         # Build the LangGraph workflow.
         self.workflow = self.build_graph()
 
+        # Additional attributes for state.
+        self.initial_context = ""
+        self.intake_data = {}
+
+    def generate_standalone_followup(self, state: TherapyState) -> str:
+        """
+        Generate a self-contained follow-up question that captures the latest conversation context.
+        This method is invoked when no new undiscussed topic is found and ensures that the question
+        remains contextually coherent and compassionate.
+        """
+        conversation = "\n".join([msg["content"] for msg in state["messages"]])
+        prompt = (
+            "Based on the following conversation, generate a self-contained follow-up question "
+            "that captures the client's latest input in a warm and compassionate manner. "
+            "If no specific theme is evident, ask a gentle generic follow-up question:\n\n" +
+            conversation
+        )
+        response = self.llm.invoke([
+            SystemMessage(content="You are a warm, compassionate therapist who listens attentively."),
+            HumanMessage(content=prompt)
+        ])
+        return response.content.strip()
+
     def build_graph(self):
         builder = StateGraph(TherapyState)
 
-        # Add nodes.
+        # Add nodes that update the therapy state.
         builder.add_node("analyze_intent", self.analyze_intent)
         builder.add_node("process_intake", self.process_intake)
         builder.add_node("complete_intake", self.complete_intake)
@@ -134,17 +93,21 @@ class TherapistAgent:
         builder.add_node("handle_delete_request", self.handle_delete_request_node)
         builder.add_node("normal_therapy", self.normal_therapy)
 
-        # Routing function from analyze_intent.
+        # Store MIN_FOLLOWUPS locally so it can be used inside our nested function.
+        MIN_FOLLOWUPS = self.MIN_FOLLOWUPS
+
         def route_analyze(state: TherapyState) -> str:
             if state["intent"] == "CRISIS":
                 return "handle_crisis"
             elif state["intent"] == "DELETE_REQUEST":
                 return "handle_delete_request"
             elif state["intent"] == "NEUTRAL":
-                # If intake_phase is active and either 10 topics have been collected
-                # or there are no remaining new topics to ask then complete intake.
                 if state["intake_phase"]:
-                    if state["intake_topics_covered"] >= 10 or len([t for t in self.intake_topics if t not in state.get("asked_topics", [])]) == 0:
+                    # Force additional follow-ups until the minimum has been reached.
+                    if state.get("followup_count", 0) < MIN_FOLLOWUPS:
+                        return "process_intake"
+                    # Otherwise, if we have collected enough entries or no new topics are extracted, complete intake.
+                    elif state["intake_topics_covered"] >= 10 or len(self.extract_new_topics(state)) == 0:
                         return "complete_intake"
                     else:
                         return "process_intake"
@@ -154,99 +117,145 @@ class TherapistAgent:
                 return END
 
         builder.add_conditional_edges("analyze_intent", route_analyze)
-
-        # In process_intake, if 10 items are collected or no questions remain, transition to complete_intake.
-        topics = self.intake_topics
+        # Also check in process_intake whether we need to complete intake.
         builder.add_conditional_edges(
             "process_intake",
             lambda state: "complete_intake" if (state["intake_topics_covered"] >= 10 or 
-                                                  len([t for t in topics if t not in state.get("asked_topics", [])]) == 0)
-                           else END
+                                                   (state.get("followup_count", 0) >= MIN_FOLLOWUPS and len(self.extract_new_topics(state)) == 0))
+                                                 else END
         )
 
-        # Other nodes end the workflow.
         builder.add_edge("handle_crisis", END)
         builder.add_edge("handle_delete_request", END)
         builder.add_edge("complete_intake", END)
         builder.add_edge("normal_therapy", END)
+
         builder.set_entry_point("analyze_intent")
         return builder.compile()
+
+    def extract_new_topics(self, state: TherapyState) -> List[str]:
+        """
+        Dynamically extract new topics from the entire conversation history.
+        The LLM is prompted to list up to two topics about the client's emotional or personal experience
+        that have not already been discussed. If none are found, it returns an empty list.
+        """
+        conversation = "\n".join([str(msg["content"]) for msg in state["messages"]])
+        prompt = (
+            "Based on the following conversation, please suggest up to two specific topics "
+            "about the client's emotional or personal experience that have not yet been discussed. "
+            "If no additional topics can be identified, respond with 'None'.\n\n" +
+            conversation
+        )
+        result = self.llm.invoke([
+            SystemMessage(content="You are an expert therapist summarizing conversation topics."),
+            HumanMessage(content=prompt)
+        ]).content.strip()
+        if result.lower().startswith("none"):
+            return []
+        topics = [t.strip() for t in result.split(",") if t.strip()]
+        logger.info(f"[EXTRACT TOPICS] New topics: {topics}")
+        return topics
 
     def analyze_intent(self, state: TherapyState) -> TherapyState:
         messages = state["messages"]
         user_message = messages[-1]["content"] if messages else ""
         intent_prompt = (
-            "Analyze message for these intents:\n"
-            "1. CRISIS - Expressions of self-harm/suicide/extreme hopelessness.\n"
-            "2. DELETE_REQUEST - Clear channel management requests.\n"
-            "3. NEUTRAL - Other messages.\n\n"
-            "Respond ONLY with: CRISIS, DELETE_REQUEST, or NEUTRAL."
+            "Analyze the following message for its intent:\n"
+            "1. CRISIS - if there are expressions of self-harm, suicide, or extreme hopelessness.\n"
+            "2. DELETE_REQUEST - if there are requests to delete or terminate the conversation.\n"
+            "3. NEUTRAL - for all other messages.\n\n"
+            "Respond ONLY with one of: CRISIS, DELETE_REQUEST, or NEUTRAL."
         )
-        crisis_check = self.llm.invoke([
+        response = self.llm.invoke([
             SystemMessage(content=intent_prompt),
             HumanMessage(content=f"Message: {user_message}")
         ])
-        if "CRISIS" in crisis_check.content:
+        if "CRISIS" in response.content:
             intent = "CRISIS"
-        elif "DELETE" in crisis_check.content:
+        elif "DELETE" in response.content:
             intent = "DELETE_REQUEST"
         else:
             intent = "NEUTRAL"
-        logger.info(f"[ANALYZE INTENT] Input: {user_message[:50]}... | Determined intent: {intent}")
+        logger.info(f"[ANALYZE INTENT] {user_message[:50]}... -> {intent}")
         return {**state, "intent": intent}
 
     def process_intake(self, state: TherapyState) -> TherapyState:
+        """
+        Processes the user's message during the intake phase by:
+        1. Recording the message as a new entry.
+        2. Ensuring that a minimum of three follow-up questions are asked.
+        3. Generating contextually relevant follow-ups either based on extracted topics or via a standalone prompt.
+        """
         messages = state["messages"]
         user_message = messages[-1]["content"] if messages else ""
         intake_data = state["intake_data"]
-        asked_topics = state.get("asked_topics", [])
 
         logger.info(f"[PROCESS INTAKE] Received message: {user_message}")
-        analysis_result = self.llm.invoke([
-            SystemMessage(content="You are a therapist analyzing client responses for relevant intake topics."),
-            HumanMessage(content=f'Analyze: "{user_message}"')
-        ]).content.lower()
-        logger.info(f"[PROCESS INTAKE] Analysis result: {analysis_result}")
 
-        # Check each topic using keyword matching.
-        for topic, keywords in self.topic_keywords.items():
-            if topic not in intake_data:
-                for kw in keywords:
-                    if kw in user_message.lower() or kw in analysis_result:
-                        intake_data[topic] = user_message
-                        logger.info(f"[INTAKE LOG] Captured info for '{topic}': {user_message[:50]}...")
-                        print(f"[INTAKE LOG] Captured info for '{topic}': {user_message[:50]}...")
-                        break
+        # Record the user's message as a new entry.
+        entry_key = f"Entry {len(intake_data) + 1}"
+        intake_data[entry_key] = user_message
 
-        intake_topics_covered = len(intake_data)
-        # Select next topic that is missing and has not been asked.
-        missing_topics = [topic for topic in self.intake_topics if topic not in intake_data and topic not in asked_topics]
-        if missing_topics:
-            next_topic = missing_topics[0]
-            asked_topics.append(next_topic)
-            follow_up_question = self.custom_questions.get(next_topic,
-                f"If you're comfortable, could you share a bit more about your {next_topic.lower()}? I'm here to listen.")
+        # Retrieve follow-up count and topics already used.
+        followup_count = state.get("followup_count", 0)
+        asked_topics = state.get("asked_topics", [])
+        MIN_FOLLOWUPS = self.MIN_FOLLOWUPS
+
+        if followup_count < MIN_FOLLOWUPS:
+            # Try to extract new topics from the conversation context.
+            extracted_topics = self.extract_new_topics(state)
+            if extracted_topics:
+                # Use only topics not yet asked.
+                candidate_topics = [t for t in extracted_topics if t not in asked_topics]
+                if candidate_topics:
+                    chosen_topic = candidate_topics[0]
+                    prompt = (
+                        f"Considering the client's recent messages, generate a thoughtful, open-ended follow-up question "
+                        f"about '{chosen_topic}' that invites the client to elaborate on their feelings and context."
+                    )
+                    followup_question = self.llm.invoke([
+                        SystemMessage(content="You are a warm and empathetic therapist."),
+                        HumanMessage(content=prompt)
+                    ]).content.strip()
+                    asked_topics.append(chosen_topic)
+                else:
+                    # Fallback: generate a standalone follow-up.
+                    followup_question = self.generate_standalone_followup(state)
+            else:
+                # Fallback when no topics are extracted.
+                followup_question = self.generate_standalone_followup(state)
+            followup_count += 1
         else:
-            follow_up_question = (
-                "I truly appreciate your openness. It seems we've discussed many aspects already; if there's anything else you'd like to share, I'm here to listen."
+            # After reaching the minimum follow-ups, provide a gentle final check-in prompt.
+            followup_question = (
+                "I appreciate your openness today. Could you share any additional thoughts or feelings you might have? "
+                "I’m here to listen and support you through this process."
             )
+
         updated_state = {
             **state,
             "intake_data": intake_data,
-            "intake_topics_covered": intake_topics_covered,
             "asked_topics": asked_topics,
-            "messages": messages + [{"role": "assistant", "content": follow_up_question}]
+            "followup_count": followup_count,
+            "intake_topics_covered": len(intake_data),
+            "messages": messages + [{"role": "assistant", "content": followup_question}]
         }
-        logger.info(f"[PROCESS INTAKE] Total topics collected: {intake_topics_covered}")
+
+        logger.info(f"[PROCESS INTAKE] Total entries: {len(intake_data)}; Follow-up count: {followup_count}")
         return updated_state
 
     def complete_intake(self, state: TherapyState) -> TherapyState:
+        """
+        Summarizes all the intake entries and ends the intake phase.
+        """
         intake_data = state["intake_data"]
-        logger.info(f"[INTAKE COMPLETE] Collected {len(intake_data)} topics for user {state['user_id']}.")
-        print(f"[INTAKE COMPLETE] Collected {len(intake_data)} topics for user {state['user_id']}.")
+        logger.info(f"[INTAKE COMPLETE] {len(intake_data)} entries collected for user {state['user_id']}.")
+        summary_lines = [f"{key}: {value}" for key, value in intake_data.items()]
+        summary = "\n".join(summary_lines)
         final_message = (
-            "Thank you so much for sharing with me. I've gathered enough information to understand your situation better, "
-            "and we'll now focus on supporting you moving forward."
+            "Thank you for sharing your experiences with such openness. Here is a summary of what you've shared:\n\n"
+            f"{summary}\n\n"
+            "We'll now shift our focus to how I can best support you moving forward."
         )
         updated_state = {
             **state,
@@ -257,8 +266,9 @@ class TherapistAgent:
 
     def handle_crisis_node(self, state: TherapyState) -> TherapyState:
         crisis_response = (
-            "I understand you're experiencing deep pain right now. If you feel unsafe or at risk, please consider calling 988 (in the US) or seeking immediate help. "
-            "Remember, you are not alone—I care about you, and I'm here to support you."
+            "I understand you're experiencing deep pain right now. If you feel unsafe or have thoughts of harming yourself, "
+            "please immediately call emergency services (e.g., 988 if in the US) or seek help from someone you trust. "
+            "You matter, and I'm here to support you."
         )
         updated_state = {
             **state,
@@ -268,8 +278,8 @@ class TherapistAgent:
 
     def handle_delete_request_node(self, state: TherapyState) -> TherapyState:
         delete_response = (
-            "It sounds like you might be overwhelmed. If you'd like to end this session and delete the channel, please type 'YES, END SESSION'. "
-            "Otherwise, I'm here to keep supporting you."
+            "If you'd like to end this session and delete our conversation, "
+            "please type 'YES, END SESSION'. Otherwise, I'm here to continue supporting you."
         )
         updated_state = {
             **state,
@@ -280,7 +290,7 @@ class TherapistAgent:
 
     def normal_therapy(self, state: TherapyState) -> TherapyState:
         response_message = (
-            "Thank you for sharing. I hear you and I'm here to support you. Let's continue our conversation so I can help you further."
+            "Thank you for sharing. I hear you, and I'm here to support you as we continue our conversation."
         )
         updated_state = {
             **state,
@@ -289,14 +299,19 @@ class TherapistAgent:
         return updated_state
 
     def get_response(self, user_message: str) -> str:
+        """
+        Processes the user's message by updating the state and executing the workflow.
+        Returns the assistant's latest response.
+        """
         if not hasattr(self, 'state'):
             self.state = TherapyState(
                 messages=[{"role": "user", "content": user_message}],
                 intake_data={},
                 initial_context=self.initial_context,
-                intake_phase=self.intake_phase,
+                intake_phase=True,
                 intake_topics_covered=0,
                 asked_topics=[],
+                followup_count=0,
                 delete_confirmation=self.delete_confirmation,
                 user_id=str(self.user_id),
                 channel_id=str(self.channel_id),
@@ -309,21 +324,23 @@ class TherapistAgent:
             }
         self.state = self.workflow.invoke(self.state)
         last_message = self.state["messages"][-1]
-        self.intake_phase = self.state["intake_phase"]
+        # Update our local copies.
         self.intake_data = self.state["intake_data"]
         self.delete_confirmation = self.state["delete_confirmation"]
         return last_message["content"] if last_message["role"] == "assistant" else "I'm processing your message."
 
+    # Legacy methods for compatibility.
     def handle_crisis(self) -> str:
         return (
-            "I understand you're in deep pain. If you feel unsafe, please seek immediate help or call 988 (in the US). "
-            "You are not alone—I am here to support you."
+            "I understand you're in deep pain. If you feel unsafe, please reach out immediately or call 988 (if in the US). "
+            "Remember, you're not alone—I am here to support you."
         )
 
     def request_delete_confirmation(self, *args, **kwargs) -> str:
         self.delete_confirmation = True
         return (
-            "Would you like to end this session and delete the channel? Type 'YES, END SESSION' to confirm, or continue chatting if not."
+            "Would you like to end this session and delete our conversation? Type 'YES, END SESSION' to confirm, "
+            "or continue chatting if not."
         )
 
     def delete_channel(self, *args, **kwargs) -> str:
@@ -333,16 +350,18 @@ class TherapistAgent:
         return "Deletion failed – no confirmation received."
 
     async def start_session(self, channel: discord.TextChannel, user: discord.Member, user_message: str):
+        """
+        Starts the session by sending a greeting through a private channel.
+        """
         self.channel = channel
-        logger.info(f"[INTAKE LOG] Started intake for user {user.id} with initial context: {user_message[:50]}...")
-        print(f"[INTAKE LOG] Started intake for user {user.id} with initial context: {user_message[:50]}...")
+        logger.info(f"[INTAKE LOG] Started intake for user {user.id} with: {user_message[:50]}...")
         greeting_prompt = (
             f'You shared: "{user_message}"\n'
-            "I truly appreciate your courage and vulnerability in sharing how you feel. "
-            "Could you tell me a bit more about the emotions you're experiencing right now?"
+            "I truly appreciate your courage in opening up about your feelings. "
+            "Could you tell me a bit more about the emotions you're experiencing right now? I'm here to listen wholeheartedly."
         )
         greeting = self.llm.invoke([
-            SystemMessage(content="You are a warm, compassionate therapist who listens respectfully and empathetically."),
+            SystemMessage(content="You are a warm, compassionate therapist who listens intently."),
             HumanMessage(content=greeting_prompt)
         ])
         await channel.send(greeting.content)
@@ -357,16 +376,19 @@ class TherapistAgent:
             intake_phase=True,
             intake_topics_covered=1,
             asked_topics=[],
+            followup_count=0,
             delete_confirmation=False,
             user_id=str(user.id),
             channel_id=str(channel.id),
             intent="NEUTRAL"
         )
-        self.intake_phase = True
-        self.initial_context = user_message
         self.intake_data = {"Presenting problem and symptoms": user_message}
 
     async def handle_message(self, message: discord.Message):
+        """
+        Handles incoming messages. If deletion confirmation is active and the user confirms,
+        deletes the channel; otherwise, processes the message and responds.
+        """
         if self.delete_confirmation and message.content.strip().upper() == "YES, END SESSION":
             await message.channel.send("Deleting channel... Thank you for your time.")
             await asyncio.sleep(2)
