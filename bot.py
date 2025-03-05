@@ -5,7 +5,7 @@ import asyncio
 from dotenv import load_dotenv
 from discord.ext import commands
 from classifier import MistralClassifier
-from agent import TherapistAgent # Now includes the GPT warning generator
+from agent import TherapistAgent
 
 load_dotenv()
 
@@ -21,7 +21,6 @@ DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 
 classifier = MistralClassifier(api_key=MISTRAL_API_KEY)
 
-# Track active therapy sessions (channel_id -> TherapistAgent)
 active_sessions = {}
 
 @bot.event
@@ -80,7 +79,8 @@ async def on_message(message: discord.Message):
                         bot_user=bot.user,
                     )
                     therapist_agent = TherapistAgent(channel_id=therapy_channel.id, user_id=message.author.id)
-                    await therapist_agent.start_session(therapy_channel, message.author, flag_message)
+                    # Pass the actual message content instead of just the flag type
+                    await therapist_agent.start_session(therapy_channel, message.author, message.content)
                     active_sessions[therapy_channel.id] = therapist_agent
             else:
                 # For harmful language not covered by crisis or deletion,
