@@ -391,7 +391,6 @@ class TherapistAgent:
 
         return response.content
 
-    # Legacy methods for compatibility.
     def handle_crisis(self) -> str:
         return (
             "I understand you're in deep pain. If you feel unsafe, please reach out immediately or call 988 (if in the US). "
@@ -427,7 +426,7 @@ class TherapistAgent:
             HumanMessage(content=greeting_prompt)
         ])
         await channel.send(greeting.content)
-        await user.send(f"Private session started: {channel.mention}")
+        await user.send(f"Hey! We noticed that you might not be in the right head space. We proactively created a channel with you and our AI therapist if you need a space to talk. When you're done with your session, let the bot know you want to end the session. Here is your private channel: {channel.mention}")
         self.state = TherapyState(
             messages=[
                 {"role": "user", "content": user_message},
@@ -466,6 +465,21 @@ class TherapistAgent:
                 for split in split_message:
                     await message.channel.send(split)
                     await asyncio.sleep(2)
+
+    def get_serializable_data(self):
+        return {
+            "user_id": self.user_id,
+            "channel_id": self.channel_id,
+            "state": self.state,
+            "delete_confirmation": self.delete_confirmation,
+        }
+
+    @classmethod
+    def from_serializable_data(cls, data):
+        instance = cls(channel_id=data["channel_id"], user_id=data["user_id"])
+        instance.state = data["state"]
+        instance.delete_confirmation = data.get("delete_confirmation", False)
+        return instance
 
     @staticmethod
     def generate_warning_response(user_message: str) -> str:
