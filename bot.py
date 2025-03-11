@@ -24,6 +24,9 @@ DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 
 classifier = MistralClassifier(api_key=MISTRAL_API_KEY)
 
+# WHITELISTED CHANNELS: update with the actual channel IDs where the bot is allowed to operate.
+WHITELISTED_CHANNEL_IDS = {1341847601066020938, }
+
 # Global dictionary to store active sessions
 active_sessions = {}
 
@@ -68,6 +71,10 @@ async def on_ready():
 @bot.event
 async def on_message(message: discord.Message):
     if message.author.bot:
+        return
+
+    # Allow actions only in whitelisted channels or if the channel is an already active therapy session
+    if not (message.channel.id in WHITELISTED_CHANNEL_IDS or message.channel.id in active_sessions):
         return
 
     # Check if the message is in an active therapy session channel
@@ -125,7 +132,7 @@ async def on_message(message: discord.Message):
                     if therapy_channel:
                         await therapy_channel.send(f"**{message.author.name}:** {message.content}")
                         await therapy_channel.send(f"**Therapist:** {response}")
-                    await message.author.send("Your message has been added to your session.")
+                    await message.author.send("Hey, we noticed that you might be currently going through a tough time, we have appended your message to your ongoing therapy session. If you do not want to use the channel, tell Aspen to end the session.")
                     return
                 else:
                     therapy_channel = await TherapistAgent.create_private_channel(
@@ -167,9 +174,9 @@ async def therapy_help_command(ctx):
     embed.add_field(
         name="Triggering a Therapy Session",
         value=(
-            "Simply send a message in any channel. Your message will be analyzed, "
-            "and if it is flagged for concerns, "
-            "a private therapy session will be automatically initiated."
+            "Simply send a message in any whitelisted channel. Your message will be analyzed, "
+            "and if it is flagged for concerns, a private therapy session will be automatically initiated. If you are"
+            " already in an active session, your message will be appended to it."
         ),
         inline=False
     )
@@ -186,6 +193,15 @@ async def therapy_help_command(ctx):
         value=(
             "To end your therapy session, type **YES, END SESSION** in your therapy channel. "
             "A summary and full log of the conversation will be sent to your DM before the channel is deleted."
+        ),
+        inline=False
+    )
+    embed.add_field(
+        name="For those testing the bot",
+        value=(
+            "To test the bot, you can send a message in the channel designated for Aspen."
+            "An example prompt to trigger a therapy session is: **I want to cry right now and im super sad.** "
+            "From here, you will need to roleplay a scenario where you are seeking help."
         ),
         inline=False
     )
