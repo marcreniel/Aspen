@@ -16,7 +16,7 @@ logging.basicConfig(level=logging.INFO)
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix=PREFIX, intents=intents)
 
-MISTRAL_API_KEY = os.getenv("MISTRAL_API")
+MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 
 classifier = MistralClassifier(api_key=MISTRAL_API_KEY)
@@ -45,7 +45,13 @@ async def on_message(message: discord.Message):
             return
 
         response = therapist_agent.get_response(message.content)
-        await message.channel.send(response)
+        if len(response) <= 2000:
+            await message.channel.send(response)
+        else:
+            split_message = [response[i:i+2000] for i in range(0, len(response), 2000)]
+            for split in split_message:
+                await message.channel.send(split)
+                await asyncio.sleep(2)
         return
 
     # If not in an active session channel, check if the user already has an active session

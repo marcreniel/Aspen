@@ -8,9 +8,16 @@ from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.graph import StateGraph, END
+from exa_py import Exa
+from openai import OpenAI
 
 load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API")
+#
+EXA_API_KEY = os.getenv("EXA_API_KEY")
+exa = Exa(api_key= EXA_API_KEY)
+openai = OpenAI(api_key=OPENAI_API_KEY)
+#
 
 # Set up logging to console
 logger = logging.getLogger("therapy")
@@ -253,11 +260,43 @@ class TherapistAgent:
         logger.info(f"[INTAKE COMPLETE] {len(intake_data)} entries collected for user {state['user_id']}.")
         summary_lines = [f"{key}: {value}" for key, value in intake_data.items()]
         summary = "\n".join(summary_lines)
-        final_message = (
-            "Thank you for sharing your experiences with such openness. Here is a summary of what you've shared:\n\n"
-            f"{summary}\n\n"
-            "We'll now shift our focus to how I can best support you moving forward."
+
+        #
+        query = f"Evidence-based therapeutic procedures and treatments for patients, given user-inputted experiences and symptoms: {summary}"
+    
+        # Perform the search with autoprompt enabled
+        results = exa.search_and_contents(
+            query=query,
+            num_results=5,
+            use_autoprompt=True,  # Let Exa optimize the query
+            type="auto",          # Let Exa choose between neural/keyword
+            text={"max_characters": 3000},  # Get enough context but not too much
+            highlights=True       # Get relevant snippets
         )
+
+        # Extract and format the most relevant information
+        formatted_results = []
+        for result in results.results:
+            formatted_results.append(f"SOURCE: {result.title} ({result.url})\n\n" + 
+                                    f"HIGHLIGHTS: {' '.join(result.highlights or [])}\n\n" +
+                                    f"TEXT EXCERPT: {result.text[:500]}...\n")
+
+        context = "\n\n".join(formatted_results)
+
+        exa_system_prompt = "You are a deeply compassionate therapist. Analyze the search results and create an evidence-based therapy plan. Focus on practical techniques, exercises, and approaches that address the specific symptoms. Cite sources when possible."
+        exa_user_prompt = "Based on these search results, generate a therapy plan for the patient. Present it in a conversational way and make it easy to read. Stay informative but compassionate."
+
+        response = openai.chat.completions.create(  
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": exa_system_prompt},
+                {"role": "user", "content": f"""{exa_user_prompt} Context: {results}"""}
+            ]
+        )        
+
+        final_message = response.choices[0].message.content
+        #
+
         updated_state = {
             **state,
             "intake_phase": False,
@@ -328,6 +367,7 @@ class TherapistAgent:
         # Update our local copies.
         self.intake_data = self.state["intake_data"]
         self.delete_confirmation = self.state["delete_confirmation"]
+
         return last_message["content"] if last_message["role"] == "assistant" else "I'm processing your message."
 
     # Legacy methods for compatibility.
@@ -396,7 +436,15 @@ class TherapistAgent:
             await message.channel.delete()
         else:
             response = self.get_response(message.content)
-            await message.channel.send(response)
+            # If within 2000 characters (Discord's limit)
+            if len(response) <= 2000:
+                await message.channel.send(response)
+            # Over 2000 characters
+            else:
+                split_message = [response[i:i+2000] for i in range(0, len(response), 2000)]
+                for split in split_message:
+                    await message.channel.send(split)
+                    await asyncio.sleep(2)
 
     @staticmethod
     def generate_warning_response(user_message: str) -> str:
