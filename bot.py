@@ -2,6 +2,7 @@ import os
 import discord
 import logging
 import asyncio
+import tempfile
 from dotenv import load_dotenv
 from discord.ext import commands
 from classifier import MistralClassifier
@@ -38,6 +39,23 @@ async def on_message(message: discord.Message):
         
         # Check for deletion confirmation command
         if therapist_agent.delete_confirmation and message.content.strip().upper() == "YES, END SESSION":
+            # Create a temporary file to write the conversation summary and log to.
+            with tempfile.NamedTemporaryFile(delete=False, mode='w', suffix='.txt') as temp_file:
+                conversation_history = ""
+                for msg in therapist_agent.state["messages"]:
+                    conversation_history += f"{msg['role'].capitalize()}: {msg['content']}\n\n"
+
+                conversation_summary = therapist_agent.get_conversation_summary(conversation_history)
+                
+                temp_file.write(f"SUMMARY:\n\n{conversation_summary}\n\nCHAT LOG:\n\n{conversation_history}")
+                temp_file_name = temp_file.name
+
+            # Get the user by their ID.
+            user = message.guild.get_member(int(therapist_agent.user_id))
+            if user:
+                # Send the file to the user via DM before deleting the channel.
+                await user.send("Here is a summary and log of your conversation:", file=discord.File(temp_file_name))
+
             await message.channel.send("Thank you for confirming. This therapy channel will now be deleted. Take care!")
             await asyncio.sleep(5)  # Allow the user some time to read the message
             await message.channel.delete()

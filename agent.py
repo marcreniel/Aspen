@@ -328,12 +328,23 @@ class TherapistAgent:
         return updated_state
 
     def normal_therapy(self, state: TherapyState) -> TherapyState:
-        response_message = (
-            "Thank you for sharing. I hear you, and I'm here to support you as we continue our conversation."
+        """
+        Continues conversation using the past conversation as context.
+        Answers any questions from the user about the therapy plan.
+        """
+
+        conversation = "\n".join([msg["content"] for msg in state["messages"]])
+        prompt = (
+            "Based on the following conversation, continue therapeutic conversation in a warm and compassionate manner, also answering any questions about the therapy plan if relevant.\n\n" + conversation
         )
+        response = self.llm.invoke([
+            SystemMessage(content="You are a warm, compassionate therapist who listens attentively."),
+            HumanMessage(content=prompt)
+        ])
+
         updated_state = {
             **state,
-            "messages": state["messages"] + [{"role": "assistant", "content": response_message}]
+            "messages": state["messages"] + [{"role": "assistant", "content": response.content}]
         }
         return updated_state
 
@@ -368,6 +379,17 @@ class TherapistAgent:
         self.delete_confirmation = self.state["delete_confirmation"]
 
         return last_message["content"] if last_message["role"] == "assistant" else "I'm processing your message."
+    
+    def get_conversation_summary(self, conversation_history: str) -> str:
+        prompt = (
+            "Summarize the conversation in a warm and positive way, making sure to include the key takeaways and steps the patient can take to get better.\n\n" + conversation_history
+        )
+        response = self.llm.invoke([
+            SystemMessage(content="You are a warm, compassionate therapist."),
+            HumanMessage(content=prompt)
+        ])
+
+        return response.content
 
     # Legacy methods for compatibility.
     def handle_crisis(self) -> str:
