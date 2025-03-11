@@ -25,7 +25,7 @@ DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 classifier = MistralClassifier(api_key=MISTRAL_API_KEY)
 
 # WHITELISTED CHANNELS: update with the actual channel IDs where the bot is allowed to operate.
-WHITELISTED_CHANNEL_IDS = {1341847601066020938, }
+WHITELISTED_CHANNEL_IDS = {1341847601066020938, 1349145123359031306}
 
 # Global dictionary to store active sessions
 active_sessions = {}
