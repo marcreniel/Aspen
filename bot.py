@@ -45,6 +45,8 @@ async def on_message(message: discord.Message):
             return
 
         response = therapist_agent.get_response(message.content)
+
+        # Send response according to Discord's character limit
         if len(response) <= 2000:
             await message.channel.send(response)
         else:

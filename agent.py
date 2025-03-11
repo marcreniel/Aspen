@@ -13,11 +13,7 @@ from openai import OpenAI
 
 load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API")
-#
 EXA_API_KEY = os.getenv("EXA_API_KEY")
-exa = Exa(api_key= EXA_API_KEY)
-openai = OpenAI(api_key=OPENAI_API_KEY)
-#
 
 # Set up logging to console
 logger = logging.getLogger("therapy")
@@ -259,44 +255,47 @@ class TherapistAgent:
         intake_data = state["intake_data"]
         logger.info(f"[INTAKE COMPLETE] {len(intake_data)} entries collected for user {state['user_id']}.")
         summary_lines = [f"{key}: {value}" for key, value in intake_data.items()]
-        summary = "\n".join(summary_lines)
+        summary = "\n".join(summary_lines)   
 
-        #
-        query = f"Evidence-based therapeutic procedures and treatments for patients, given user-inputted experiences and symptoms: {summary}"
-    
-        # Perform the search with autoprompt enabled
-        results = exa.search_and_contents(
-            query=query,
-            num_results=5,
-            use_autoprompt=True,  # Let Exa optimize the query
-            type="auto",          # Let Exa choose between neural/keyword
-            text={"max_characters": 3000},  # Get enough context but not too much
-            highlights=True       # Get relevant snippets
-        )
+        def create_therapy_plan() -> str:
+            exa = Exa(api_key= EXA_API_KEY)
+            openai = OpenAI(api_key=OPENAI_API_KEY)
 
-        # Extract and format the most relevant information
-        formatted_results = []
-        for result in results.results:
-            formatted_results.append(f"SOURCE: {result.title} ({result.url})\n\n" + 
-                                    f"HIGHLIGHTS: {' '.join(result.highlights or [])}\n\n" +
-                                    f"TEXT EXCERPT: {result.text[:500]}...\n")
+            query = f"Evidence-based therapeutic procedures and treatments for patients, given user-inputted experiences and symptoms: {summary}"
+        
+            results = exa.search_and_contents(
+                query=query,
+                num_results=5,
+                use_autoprompt=True,
+                type="auto",
+                text={"max_characters": 3000},
+                highlights=True
+            )
 
-        context = "\n\n".join(formatted_results)
+            # Extract and format the most relevant information
+            formatted_results = []
+            for result in results.results:
+                formatted_results.append(f"SOURCE: {result.title} ({result.url})\n\n" + 
+                                        f"HIGHLIGHTS: {' '.join(result.highlights or [])}\n\n" +
+                                        f"TEXT EXCERPT: {result.text[:500]}...\n")
 
-        exa_system_prompt = "You are a deeply compassionate therapist. Analyze the search results and create an evidence-based therapy plan. Focus on practical techniques, exercises, and approaches that address the specific symptoms. Cite sources when possible."
-        exa_user_prompt = "Based on these search results, generate a therapy plan for the patient. Present it in a conversational way and make it easy to read. Stay informative but compassionate."
+            context = "\n\n".join(formatted_results)
 
-        response = openai.chat.completions.create(  
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": exa_system_prompt},
-                {"role": "user", "content": f"""{exa_user_prompt} Context: {results}"""}
-            ]
-        )        
+            exa_system_prompt = "You are a deeply compassionate therapist. Analyze the search results and create an evidence-based therapy plan. Focus on practical techniques, exercises, and approaches that address the specific symptoms. Cite sources when possible."
+            exa_user_prompt = "Based on these search results, generate a therapy plan for the patient. Present it in a conversational way and make it easy to read. Stay informative but compassionate."
 
-        final_message = response.choices[0].message.content
-        #
+            response = openai.chat.completions.create(  
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": exa_system_prompt},
+                    {"role": "user", "content": f"""{exa_user_prompt} Context: {results}"""}
+                ]
+            )
 
+            return response.choices[0].message.content
+
+        final_message = create_therapy_plan()
+        
         updated_state = {
             **state,
             "intake_phase": False,
