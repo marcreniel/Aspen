@@ -27,6 +27,9 @@ classifier = MistralClassifier(api_key=MISTRAL_API_KEY)
 # WHITELISTED CHANNELS: update with the actual channel IDs where the bot is allowed to operate.
 WHITELISTED_CHANNEL_IDS = {1341847601066020938, 1349145123359031306}
 
+# ADMIN_ID: the Discord user ID of the bot administrator
+ADMIN_ID = 517675172564828184
+
 # Global dictionary to store active sessions
 active_sessions = {}
 
@@ -73,9 +76,38 @@ async def on_message(message: discord.Message):
     if message.author.bot:
         return
 
-    # Allow actions only in whitelisted channels or if the channel is an already active therapy session
-    if not (message.channel.id in WHITELISTED_CHANNEL_IDS or message.channel.id in active_sessions):
-        return
+    # --- ADMIN COMMANDS (Only available to ADMIN_ID) ---
+    if message.author.id == ADMIN_ID:
+        content = message.content.strip()
+
+        if content == "!prune_sessions":
+            await message.channel.send("Pruning all active sessions and deleting respective channels...")
+            # Use a list copy to avoid modifying the dict while iterating.
+            for session_key, session in list(active_sessions.items()):
+                if session.channel:
+                    try:
+                        await session.channel.delete()
+                    except Exception as e:
+                        logger.error(f"Error deleting channel for session {session_key}: {e}")
+                del active_sessions[session_key]
+            await message.channel.send("All active sessions have been pruned.")
+            return
+
+        elif content == "!list_sessions":
+            if not active_sessions:
+                await message.channel.send("There are no active therapy sessions.")
+            else:
+                # Build a list of session details.
+                session_lines = []
+                for session_key, session in active_sessions.items():
+                    channel_name = session.channel.name if session.channel else "No Channel"
+                    session_lines.append(
+                        f"Session Key: {session_key} | User ID: {session.user_id} | Channel: {channel_name} (ID: {session.channel_id})"
+                    )
+                response = "Current Active Therapy Sessions:\n" + "\n".join(session_lines)
+                # In case the response is too long, you might consider sending it as a file.
+                await message.channel.send(response)
+            return
 
     # Check if the message is in an active therapy session channel
     if message.channel.id in active_sessions:
